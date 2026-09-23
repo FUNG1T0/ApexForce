@@ -8,7 +8,7 @@ API monolítica para la operación de inventarios de sucursales de Apex Force.
 - Roles `ADMIN_GENERAL`, `GERENTE_SUCURSAL` y `EMPLEADO_MOSTRADOR`.
 - Contraseñas con hash Argon2id; el sistema nunca las almacena en texto plano.
 - Consulta de inventario de solo lectura mediante un endpoint protegido por JWT.
-- Persistencia relacional con PostgreSQL; la migración de las tablas de productos e inventario se implementará en el siguiente paso.
+- Persistencia relacional con PostgreSQL para usuarios, roles, productos, existencias por sucursal y auditoría.
 - Pruebas automatizadas con Jest y cobertura mínima del 80% sobre módulos de aplicación.
 
 El alta de usuarios requiere un administrador autenticado. El primer administrador se crea una sola vez mediante el script de bootstrap; no existe un registro público que permita asignarse permisos elevados.
@@ -31,7 +31,11 @@ La API escucha en `http://localhost:3000`. `GET /health` es el chequeo de dispon
 
 ### `GET /api/inventory`
 
-Requiere `Authorization: Bearer <token>` y devuelve el inventario en formato `{ "items": [...] }`. El endpoint es de solo lectura y está disponible para cualquier usuario interno autenticado. Su consulta PostgreSQL depende de las tablas `products` e `inventory`, que se crearán en el siguiente paso del proyecto.
+Requiere `Authorization: Bearer <token>` y devuelve el inventario en formato `{ "items": [...] }`. El endpoint es de solo lectura y está disponible para cualquier usuario interno autenticado.
+
+## Esquema inicial de PostgreSQL
+
+La migración `002_create_inventory_schema.sql` agrega las tablas `roles`, `products`, `inventory` y `audit_logs`, conservando la tabla `users` de la migración inicial. `users.role` referencia `roles.code`; cada existencia pertenece a un producto y a una sucursal, y la cantidad no puede ser negativa ni duplicarse para el mismo producto y sucursal. Los registros de auditoría conservan actor, acción, entidad, sucursal, detalles JSON y fecha. `schema_migrations` es una tabla técnica que registra las migraciones aplicadas. `branch_id` queda como identificador UUID sin FK porque el catálogo de sucursales no forma parte de las cinco tablas solicitadas.
 
 ## Pruebas
 
