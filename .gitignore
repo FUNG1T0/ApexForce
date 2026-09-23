@@ -1,0 +1,5 @@
+backend/.env
+backend/node_modules/
+backend/coverage/
+backend/.nyc_output/
+*.log
