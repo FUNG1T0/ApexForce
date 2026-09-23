@@ -47,6 +47,14 @@ describe('UserRepository', () => {
     expect(pool.query.mock.calls[0][1]).toEqual([row.id, row.name, row.email, row.password_hash, row.role, null]);
   });
 
+  test('upgrades a stored password hash without changing other user data', async () => {
+    const pool = { query: jest.fn().mockResolvedValue({ rowCount: 1, rows: [] }) };
+    const repository = new UserRepository(pool);
+    await repository.updatePasswordHash(row.id, '$2b$12$new-bcrypt-hash');
+    expect(pool.query.mock.calls[0][0]).toContain('UPDATE users SET password_hash');
+    expect(pool.query.mock.calls[0][1]).toEqual([row.id, '$2b$12$new-bcrypt-hash']);
+  });
+
   test('checks whether an administrator exists', async () => {
     const pool = { query: jest.fn().mockResolvedValue({ rows: [{ exists: true }] }) };
     const repository = new UserRepository(pool);

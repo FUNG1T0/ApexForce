@@ -20,19 +20,18 @@ function setup() {
   const repository = createMemoryUserRepository([
     {
       id: ADMIN_ID, name: 'Admin General', email: 'admin@apexforce.local',
-      passwordHash: 'hashed:admin-password-very-long', role: ROLES.ADMIN_GENERAL,
+      passwordHash: '$2b$mock$12$admin-password-very-long', role: ROLES.ADMIN_GENERAL,
       branchId: null, createdAt: new Date('2026-01-01T00:00:00.000Z'),
     },
     {
       id: EMPLOYEE_ID, name: 'Empleado Uno', email: 'empleado@apexforce.local',
-      passwordHash: 'hashed:employee-password-very-long', role: ROLES.EMPLEADO_MOSTRADOR,
+      passwordHash: '$2b$mock$12$employee-password-very-long', role: ROLES.EMPLEADO_MOSTRADOR,
       branchId: BRANCH_ID, createdAt: new Date('2026-01-01T00:00:00.000Z'),
     },
   ]);
   const passwordHasher = {
-    argon2id: 2,
-    hash: async (password) => `hashed:${password}`,
-    verify: async (storedHash, password) => storedHash === `hashed:${password}`,
+    hash: async (password, rounds) => `$2b$mock$${rounds}$${password}`,
+    compare: async (password, storedHash) => storedHash === `$2b$mock$12$${password}`,
   };
   return {
     repository,
@@ -67,6 +66,19 @@ describe('Apex Force API', () => {
     expect(response.body.user).not.toHaveProperty('passwordHash');
   });
 
+  test('also exposes the assignment auth paths and uses the stored role, not a client-supplied role', async () => {
+    const { app } = setup();
+    const response = await request(app).post('/auth/login').send({
+      email: 'empleado@apexforce.local',
+      password: 'employee-password-very-long',
+      role: ROLES.ADMIN_GENERAL,
+    }).expect(200);
+    const claims = jwt.verify(response.body.accessToken, JWT_SECRET, {
+      algorithms: ['HS256'], audience: AUDIENCE, issuer: ISSUER,
+    });
+    expect(claims.role).toBe(ROLES.EMPLEADO_MOSTRADOR);
+  });
+
   test('rejects invalid and unknown login credentials', async () => {
     const { app } = setup();
     await request(app).post('/api/auth/login').send({ email: 'bad', password: '' }).expect(400);
@@ -88,11 +100,12 @@ describe('Apex Force API', () => {
     await request(app).post('/api/auth/register').send(newUser).expect(401);
     await request(app).post('/api/auth/register').set('Authorization', `Bearer ${employeeToken}`)
       .send(newUser).expect(403);
+    await request(app).post('/auth/register').send(newUser).expect(401);
   });
 
   test('allows an administrator to register a user with a valid role', async () => {
     const { app, adminToken, repository } = setup();
-    const response = await request(app).post('/api/auth/register')
+    const response = await request(app).post('/auth/register')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
         name: 'Gerente de Sucursal', email: ' GERENTE@APEXFORCE.LOCAL ',
@@ -102,6 +115,15 @@ describe('Apex Force API', () => {
     expect(response.body.user.role).toBe(ROLES.GERENTE_SUCURSAL);
     expect(response.body.user).not.toHaveProperty('passwordHash');
     expect(repository.users).toHaveLength(3);
+  });
+
+  test('rejects an expired JWT', async () => {
+    const { app } = setup();
+    const expiredToken = jwt.sign({ role: ROLES.ADMIN_GENERAL }, JWT_SECRET, {
+      algorithm: 'HS256', audience: AUDIENCE, expiresIn: -1, issuer: ISSUER, subject: ADMIN_ID,
+    });
+    await request(app).get('/api/users/me')
+      .set('Authorization', `Bearer ${expiredToken}`).expect(401);
   });
 
   test('rejects privilege escalation and duplicate email during registration', async () => {
