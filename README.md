@@ -7,7 +7,8 @@ API monolítica para la operación de inventarios de sucursales de Apex Force.
 - Registro administrativo de usuarios internos e inicio de sesión con JWT.
 - Roles `ADMIN_GENERAL`, `GERENTE_SUCURSAL` y `EMPLEADO_MOSTRADOR`.
 - Contraseñas con hash Argon2id; el sistema nunca las almacena en texto plano.
-- Consulta de inventario de solo lectura mediante un endpoint protegido por JWT.
+- Consulta de productos e inventario para usuarios autenticados; la creación de productos y actualización de existencias requiere `ADMIN_GENERAL`.
+- Auditoría transaccional de altas de usuarios, productos y existencias, con el actor tomado del token autenticado.
 - Persistencia relacional con PostgreSQL para usuarios, roles, productos, existencias por sucursal y auditoría.
 - Pruebas automatizadas con Jest y cobertura mínima del 80% sobre módulos de aplicación.
 
@@ -29,9 +30,29 @@ El alta de usuarios requiere un administrador autenticado. El primer administrad
 
 La API escucha en `http://localhost:3000`. `GET /health` es el chequeo de disponibilidad. `POST /api/auth/login` devuelve un token; el administrador autenticado puede dar de alta usuarios con `POST /api/auth/register`. `GET /api/users/me` devuelve el perfil del token actual.
 
+### `GET /api/products`
+
+Requiere `Authorization: Bearer <token>` y devuelve el catálogo de productos.
+
+### `POST /api/products` (solo `ADMIN_GENERAL`)
+
+```json
+{"sku":"AF-001","name":"Producto de ejemplo","description":"Descripción opcional"}
+```
+
+SKU y nombre son obligatorios. El SKU se normaliza a mayúsculas y debe ser único.
+
 ### `GET /api/inventory`
 
-Requiere `Authorization: Bearer <token>` y devuelve el inventario en formato `{ "items": [...] }`. El endpoint es de solo lectura y está disponible para cualquier usuario interno autenticado.
+Requiere `Authorization: Bearer <token>` y devuelve el inventario en formato `{ "items": [...] }`. Está disponible para cualquier usuario interno autenticado.
+
+### `PUT /api/inventory` (solo `ADMIN_GENERAL`)
+
+Establece la existencia de un producto para una sucursal. La cantidad debe ser un entero no negativo; el sistema registra el actor autenticado y el cambio en una transacción.
+
+```json
+{"productId":"223e4567-e89b-42d3-a456-426614174000","branchId":"123e4567-e89b-42d3-a456-426614174002","quantity":8}
+```
 
 ## Esquema inicial de PostgreSQL
 

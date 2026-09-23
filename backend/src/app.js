@@ -3,6 +3,7 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const { AppError } = require('./domain/appError');
 const { AuthService } = require('./modules/auth/authService');
+const { InventoryService } = require('./modules/inventory/inventoryService');
 const { createAuthenticate } = require('./middleware/authenticate');
 const { requireRoles } = require('./middleware/requireRoles');
 const { ROLES } = require('./domain/roles');
@@ -19,12 +20,14 @@ function createApp({
   if (typeof jwtSecret !== 'string' || Buffer.byteLength(jwtSecret, 'utf8') < 32) {
     throw new TypeError('JWT_SECRET must contain at least 32 bytes');
   }
-  if (!inventoryRepository || typeof inventoryRepository.list !== 'function') {
-    throw new TypeError('inventoryRepository with a list method is required');
+  const inventoryMethods = ['list', 'listProducts', 'createProduct', 'setQuantity'];
+  if (!inventoryRepository || inventoryMethods.some((method) => typeof inventoryRepository[method] !== 'function')) {
+    throw new TypeError(`inventoryRepository must implement: ${inventoryMethods.join(', ')}`);
   }
 
   const app = express();
   const authService = new AuthService({ userRepository, jwtSecret, tokenExpiresIn, passwordHasher });
+  const inventoryService = new InventoryService({ inventoryRepository });
   const authenticate = createAuthenticate({ jwtSecret });
   const signInLimit = loginLimiter || rateLimit({
     windowMs: 15 * 60 * 1000,
@@ -51,7 +54,7 @@ function createApp({
 
   app.post('/api/auth/register', authenticate, requireRoles(ROLES.ADMIN_GENERAL), async (req, res, next) => {
     try {
-      const user = await authService.register(req.body);
+      const user = await authService.register(req.body, req.auth.userId);
       return res.status(201).json({ user });
     } catch (error) {
       return next(error);
@@ -71,8 +74,35 @@ function createApp({
 
   app.get('/api/inventory', authenticate, async (req, res, next) => {
     try {
-      const items = await inventoryRepository.list();
+      const items = await inventoryService.listInventory();
       return res.status(200).json({ items });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  app.get('/api/products', authenticate, async (req, res, next) => {
+    try {
+      const products = await inventoryService.listProducts();
+      return res.status(200).json({ products });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  app.post('/api/products', authenticate, requireRoles(ROLES.ADMIN_GENERAL), async (req, res, next) => {
+    try {
+      const product = await inventoryService.createProduct(req.body, req.auth.userId);
+      return res.status(201).json({ product });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  app.put('/api/inventory', authenticate, requireRoles(ROLES.ADMIN_GENERAL), async (req, res, next) => {
+    try {
+      const item = await inventoryService.setQuantity(req.body, req.auth.userId);
+      return res.status(200).json({ item });
     } catch (error) {
       return next(error);
     }
