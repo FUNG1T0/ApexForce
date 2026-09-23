@@ -7,10 +7,20 @@ const { createAuthenticate } = require('./middleware/authenticate');
 const { requireRoles } = require('./middleware/requireRoles');
 const { ROLES } = require('./domain/roles');
 
-function createApp({ userRepository, jwtSecret, tokenExpiresIn = '1h', passwordHasher, loginLimiter } = {}) {
+function createApp({
+  userRepository,
+  inventoryRepository,
+  jwtSecret,
+  tokenExpiresIn = '1h',
+  passwordHasher,
+  loginLimiter,
+} = {}) {
   if (!userRepository) throw new TypeError('userRepository is required');
   if (typeof jwtSecret !== 'string' || Buffer.byteLength(jwtSecret, 'utf8') < 32) {
     throw new TypeError('JWT_SECRET must contain at least 32 bytes');
+  }
+  if (!inventoryRepository || typeof inventoryRepository.list !== 'function') {
+    throw new TypeError('inventoryRepository with a list method is required');
   }
 
   const app = express();
@@ -54,6 +64,15 @@ function createApp({ userRepository, jwtSecret, tokenExpiresIn = '1h', passwordH
       if (!user) throw new AppError(401, 'ACCOUNT_NOT_FOUND', 'La cuenta asociada al token ya no existe.');
       const { passwordHash, ...safeUser } = user;
       return res.status(200).json({ user: safeUser });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  app.get('/api/inventory', authenticate, async (req, res, next) => {
+    try {
+      const items = await inventoryRepository.list();
+      return res.status(200).json({ items });
     } catch (error) {
       return next(error);
     }

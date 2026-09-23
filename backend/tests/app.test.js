@@ -34,9 +34,22 @@ function setup() {
     hash: async (password) => `hashed:${password}`,
     verify: async (storedHash, password) => storedHash === `hashed:${password}`,
   };
+  const inventoryRepository = {
+    list: jest.fn().mockResolvedValue([
+      {
+        productId: '223e4567-e89b-42d3-a456-426614174000',
+        sku: 'AF-001',
+        productName: 'Producto de prueba',
+        branchId: BRANCH_ID,
+        quantity: 12,
+        updatedAt: '2026-09-23T12:00:00.000Z',
+      },
+    ]),
+  };
   return {
     repository,
-    app: createApp({ userRepository: repository, jwtSecret: JWT_SECRET, passwordHasher }),
+    inventoryRepository,
+    app: createApp({ userRepository: repository, inventoryRepository, jwtSecret: JWT_SECRET, passwordHasher }),
     adminToken: makeToken(ADMIN_ID, ROLES.ADMIN_GENERAL),
     employeeToken: makeToken(EMPLOYEE_ID, ROLES.EMPLEADO_MOSTRADOR),
   };
@@ -128,6 +141,18 @@ describe('Apex Force API', () => {
       .set('Authorization', `Bearer ${removedAccountToken}`).expect(401);
   });
 
+  test('protects inventory from unauthenticated requests and returns items to an authenticated user', async () => {
+    const { app, employeeToken, inventoryRepository } = setup();
+    await request(app).get('/api/inventory').expect(401);
+    expect(inventoryRepository.list).not.toHaveBeenCalled();
+
+    const response = await request(app).get('/api/inventory')
+      .set('Authorization', `Bearer ${employeeToken}`).expect(200);
+    expect(response.body.items).toHaveLength(1);
+    expect(response.body.items[0]).toMatchObject({ sku: 'AF-001', quantity: 12, branchId: BRANCH_ID });
+    expect(inventoryRepository.list).toHaveBeenCalledTimes(1);
+  });
+
   test('rejects missing, malformed, and role-tampered tokens', async () => {
     const { app } = setup();
     await request(app).get('/api/users/me').expect(401);
@@ -153,7 +178,11 @@ describe('Apex Force API', () => {
 
     const brokenRepository = createMemoryUserRepository();
     brokenRepository.findById = async () => { throw new Error('private database detail'); };
-    const brokenApp = createApp({ userRepository: brokenRepository, jwtSecret: JWT_SECRET });
+    const brokenApp = createApp({
+      userRepository: brokenRepository,
+      inventoryRepository: { list: async () => [] },
+      jwtSecret: JWT_SECRET,
+    });
     const response = await request(brokenApp).get('/api/users/me')
       .set('Authorization', `Bearer ${adminToken}`).expect(500);
     expect(response.body.error.message).toBe('Ocurrió un error interno.');

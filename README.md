@@ -2,12 +2,13 @@
 
 API monolítica para la operación de inventarios de sucursales de Apex Force.
 
-## Alcance de este primer incremento
+## Alcance del MVP
 
-- Registro administrativo de usuarios y acceso con JWT.
+- Registro administrativo de usuarios internos e inicio de sesión con JWT.
 - Roles `ADMIN_GENERAL`, `GERENTE_SUCURSAL` y `EMPLEADO_MOSTRADOR`.
 - Contraseñas con hash Argon2id; el sistema nunca las almacena en texto plano.
-- Persistencia relacional con PostgreSQL.
+- Consulta de inventario de solo lectura mediante un endpoint protegido por JWT.
+- Persistencia relacional con PostgreSQL; la migración de las tablas de productos e inventario se implementará en el siguiente paso.
 - Pruebas automatizadas con Jest y cobertura mínima del 80% sobre módulos de aplicación.
 
 El alta de usuarios requiere un administrador autenticado. El primer administrador se crea una sola vez mediante el script de bootstrap; no existe un registro público que permita asignarse permisos elevados.
@@ -27,6 +28,10 @@ El alta de usuarios requiere un administrador autenticado. El primer administrad
 6. Inicia la API con `npm run dev`.
 
 La API escucha en `http://localhost:3000`. `GET /health` es el chequeo de disponibilidad. `POST /api/auth/login` devuelve un token; el administrador autenticado puede dar de alta usuarios con `POST /api/auth/register`. `GET /api/users/me` devuelve el perfil del token actual.
+
+### `GET /api/inventory`
+
+Requiere `Authorization: Bearer <token>` y devuelve el inventario en formato `{ "items": [...] }`. El endpoint es de solo lectura y está disponible para cualquier usuario interno autenticado. Su consulta PostgreSQL depende de las tablas `products` e `inventory`, que se crearán en el siguiente paso del proyecto.
 
 ## Pruebas
 
