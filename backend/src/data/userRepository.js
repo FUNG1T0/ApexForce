@@ -43,6 +43,13 @@ class UserRepository {
     return mapUser(result.rows[0]);
   }
 
+  async updatePasswordHash(id, passwordHash) {
+    await this.pool.query(
+      'UPDATE users SET password_hash = $2 WHERE id = $1',
+      [id, passwordHash],
+    );
+  }
+
   async hasAdmin() {
     const result = await this.pool.query(
       "SELECT EXISTS (SELECT 1 FROM users WHERE role = 'ADMIN_GENERAL') AS exists",

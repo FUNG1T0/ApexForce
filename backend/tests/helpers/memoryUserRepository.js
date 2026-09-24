@@ -18,6 +18,11 @@ function createMemoryUserRepository(initialUsers = []) {
       users.push(created);
       return created;
     },
+    async updatePasswordHash(id, passwordHash) {
+      const user = users.find((entry) => entry.id === id);
+      if (!user) throw new Error('user not found');
+      user.passwordHash = passwordHash;
+    },
     async hasAdmin() {
       return users.some((user) => user.role === 'ADMIN_GENERAL');
     },
