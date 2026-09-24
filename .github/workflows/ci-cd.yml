@@ -63,8 +63,12 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package-lock.json
 
-      - name: Instalar dependencias desde el archivo de bloqueo
-        run: npm ci
+      - name: Instalar dependencias sin ejecutar scripts automáticos
+        run: npm ci --ignore-scripts
+        working-directory: backend
+
+      - name: Preparar los módulos nativos de hashing permitidos
+        run: npm rebuild argon2 bcrypt
         working-directory: backend
 
       - name: Preparar el esquema de PostgreSQL

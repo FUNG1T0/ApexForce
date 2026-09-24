@@ -157,8 +157,9 @@ describe('Apex Force API', () => {
     const expiredToken = jwt.sign({ role: ROLES.ADMIN_GENERAL }, JWT_SECRET, {
       algorithm: 'HS256', audience: AUDIENCE, expiresIn: -1, issuer: ISSUER, subject: ADMIN_ID,
     });
-    await request(app).get('/api/users/me')
-      .set('Authorization', `Bearer ${expiredToken}`).expect(401);
+    const response = await request(app).get('/api/users/me')
+      .set('Authorization', `Bearer ${expiredToken}`);
+    expect(response.status).toBe(401);
   });
 
   test('rejects privilege escalation and duplicate email during registration', async () => {
