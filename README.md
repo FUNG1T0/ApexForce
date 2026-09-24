@@ -39,6 +39,12 @@ npm run test:coverage
 
 Las pruebas de aplicación usan un repositorio en memoria, por lo que no requieren iniciar PostgreSQL. La cobertura se mide sobre lógica de aplicación; el punto de entrada del servidor y el adaptador de conexión no forman parte de esa métrica unitaria.
 
+## Integración continua y despliegue de prueba
+
+El flujo `.github/workflows/ci-cd.yml` se ejecuta al enviar cambios a `main`, `develop` o ramas `feature/**`, al abrir o actualizar un pull request hacia `main` o `develop`, y también se puede iniciar manualmente desde GitHub Actions. Instala las dependencias con `npm ci`, levanta PostgreSQL 17, aplica las migraciones y ejecuta Jest con cobertura. El umbral global de cobertura es 80%; si no se alcanza, el flujo falla.
+
+Después de las pruebas, inicia la API en el entorno efímero de GitHub Actions y consulta `GET /health`. La aplicación y PostgreSQL se detienen al terminar la ejecución; esta configuración valida el despliegue, pero no publica una URL persistente. Para tener un ambiente de pruebas accesible fuera de la ejecución, primero se debe elegir un proveedor de alojamiento y configurar sus credenciales como secretos de GitHub. Las credenciales incluidas en el flujo son únicamente datos desechables para CI y no deben reutilizarse fuera de las pruebas.
+
 ## Endpoints de autenticación
 
 ### `POST /auth/login`
