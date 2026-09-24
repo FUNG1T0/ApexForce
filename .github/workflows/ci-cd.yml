@@ -1,0 +1,99 @@
+name: CI/CD de ApexForce
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - "feature/**"
+    paths:
+      - "backend/**"
+      - ".github/workflows/ci-cd.yml"
+  pull_request:
+    branches:
+      - main
+      - develop
+    paths:
+      - "backend/**"
+      - ".github/workflows/ci-cd.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-cd-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validar-y-probar:
+    name: Pruebas y despliegue efímero de prueba
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: pruebas
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: apexforce_ci
+          POSTGRES_USER: apexforce_ci
+          POSTGRES_PASSWORD: ci_only_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U apexforce_ci -d apexforce_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      NODE_ENV: test
+      PORT: 3000
+      DATABASE_URL: postgresql://apexforce_ci:ci_only_password@127.0.0.1:5432/apexforce_ci
+      JWT_SECRET: ci-only-jwt-secret-not-for-production-32-bytes
+      JWT_EXPIRES_IN: 1h
+    steps:
+      - name: Obtener el código del repositorio
+        uses: actions/checkout@v7
+
+      - name: Configurar Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Instalar dependencias desde el archivo de bloqueo
+        run: npm ci
+        working-directory: backend
+
+      - name: Preparar el esquema de PostgreSQL
+        run: npm run db:migrate
+        working-directory: backend
+
+      - name: Ejecutar pruebas y comprobar la cobertura mínima
+        run: npm run test:coverage
+        working-directory: backend
+
+      - name: Iniciar la API en el entorno efímero y comprobar su disponibilidad
+        shell: bash
+        working-directory: backend
+        run: |
+          set -euo pipefail
+
+          npm start > "$RUNNER_TEMP/apexforce-api.log" 2>&1 &
+          api_pid=$!
+          trap 'kill "$api_pid" 2>/dev/null || true; wait "$api_pid" 2>/dev/null || true' EXIT
+
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:3000/health > "$RUNNER_TEMP/apexforce-health.json"; then
+              echo "Respuesta del chequeo de salud:"
+              cat "$RUNNER_TEMP/apexforce-health.json"
+              exit 0
+            fi
+            sleep 1
+          done
+
+          echo "La API no respondió dentro de 30 segundos. Registro de inicio:"
+          cat "$RUNNER_TEMP/apexforce-api.log"
+          exit 1

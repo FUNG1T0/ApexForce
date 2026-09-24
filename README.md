@@ -6,7 +6,7 @@ API monolítica para la operación de inventarios de sucursales de Apex Force.
 
 - Registro administrativo de usuarios y acceso con JWT.
 - Roles `ADMIN_GENERAL`, `GERENTE_SUCURSAL` y `EMPLEADO_MOSTRADOR`.
-- Contraseñas con hash Argon2id; el sistema nunca las almacena en texto plano.
+- Contraseñas nuevas con bcrypt; las cuentas existentes con Argon2id se migran al iniciar sesión correctamente cuando la clave cabe en el límite de bcrypt.
 - Persistencia relacional con PostgreSQL.
 - Pruebas automatizadas con Jest y cobertura mínima del 80% sobre módulos de aplicación.
 
@@ -26,7 +26,7 @@ El alta de usuarios requiere un administrador autenticado. El primer administrad
 5. Define `BOOTSTRAP_ADMIN_NAME`, `BOOTSTRAP_ADMIN_EMAIL` y `BOOTSTRAP_ADMIN_PASSWORD` en `backend/.env`; ejecuta `npm run bootstrap:admin` una sola vez.
 6. Inicia la API con `npm run dev`.
 
-La API escucha en `http://localhost:3000`. `GET /health` es el chequeo de disponibilidad. `POST /api/auth/login` devuelve un token; el administrador autenticado puede dar de alta usuarios con `POST /api/auth/register`. `GET /api/users/me` devuelve el perfil del token actual.
+La API escucha en `http://localhost:3000`. `GET /health` es el chequeo de disponibilidad. `POST /auth/login` devuelve un token y `POST /auth/register` permite al administrador dar de alta usuarios. Las rutas anteriores `/api/auth/login` y `/api/auth/register` siguen disponibles como alias compatibles. `GET /api/users/me` devuelve el perfil del token actual.
 
 ## Pruebas
 
@@ -39,15 +39,21 @@ npm run test:coverage
 
 Las pruebas de aplicación usan un repositorio en memoria, por lo que no requieren iniciar PostgreSQL. La cobertura se mide sobre lógica de aplicación; el punto de entrada del servidor y el adaptador de conexión no forman parte de esa métrica unitaria.
 
+## Integración continua y despliegue de prueba
+
+El flujo `.github/workflows/ci-cd.yml` se ejecuta al enviar cambios a `main`, `develop` o ramas `feature/**`, al abrir o actualizar un pull request hacia `main` o `develop`, y también se puede iniciar manualmente desde GitHub Actions. Instala las dependencias con `npm ci`, levanta PostgreSQL 17, aplica las migraciones y ejecuta Jest con cobertura. El umbral global de cobertura es 80%; si no se alcanza, el flujo falla.
+
+Después de las pruebas, inicia la API en el entorno efímero de GitHub Actions y consulta `GET /health`. La aplicación y PostgreSQL se detienen al terminar la ejecución; esta configuración valida el despliegue, pero no publica una URL persistente. Para tener un ambiente de pruebas accesible fuera de la ejecución, primero se debe elegir un proveedor de alojamiento y configurar sus credenciales como secretos de GitHub. Las credenciales incluidas en el flujo son únicamente datos desechables para CI y no deben reutilizarse fuera de las pruebas.
+
 ## Endpoints de autenticación
 
-### `POST /api/auth/login`
+### `POST /auth/login`
 
 ```json
 {"email":"admin@apexforce.local","password":"una-clave-segura"}
 ```
 
-### `POST /api/auth/register` (solo `ADMIN_GENERAL`)
+### `POST /auth/register` (solo `ADMIN_GENERAL`)
 
 ```json
 {
@@ -63,4 +69,4 @@ Las pruebas de aplicación usan un repositorio en memoria, por lo que no requier
 
 Requiere `Authorization: Bearer <token>`.
 
-Las claves de entorno y los archivos `.env` no deben subirse al repositorio. En producción, configura secretos por el gestor de secretos del proveedor de despliegue y habilita HTTPS.
+Los roles de autorización se obtienen de la cuenta y del JWT firmado; el rol enviado en el cuerpo del login se ignora. El endpoint de registro requiere un administrador y valida el rol asignado a la nueva cuenta. bcrypt procesa como máximo 72 bytes UTF-8; por ello, las nuevas contraseñas se limitan a ese tamaño. Las claves de entorno y los archivos `.env` no deben subirse al repositorio. En producción, configura secretos por el gestor de secretos del proveedor de despliegue y habilita HTTPS.

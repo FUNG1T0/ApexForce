@@ -43,23 +43,27 @@ function createApp({
 
   app.get('/health', (req, res) => res.status(200).json({ status: 'ok' }));
 
-  app.post('/api/auth/login', signInLimit, async (req, res, next) => {
+  const login = async (req, res, next) => {
     try {
       const result = await authService.login(req.body);
       return res.status(200).json(result);
     } catch (error) {
       return next(error);
     }
-  });
+  };
+  app.post('/auth/login', signInLimit, login);
+  app.post('/api/auth/login', signInLimit, login);
 
-  app.post('/api/auth/register', authenticate, requireRoles(ROLES.ADMIN_GENERAL), async (req, res, next) => {
+  const register = async (req, res, next) => {
     try {
       const user = await authService.register(req.body, req.auth.userId);
       return res.status(201).json({ user });
     } catch (error) {
       return next(error);
     }
-  });
+  };
+  app.post('/auth/register', authenticate, requireRoles(ROLES.ADMIN_GENERAL), register);
+  app.post('/api/auth/register', authenticate, requireRoles(ROLES.ADMIN_GENERAL), register);
 
   app.get('/api/users/me', authenticate, async (req, res, next) => {
     try {
