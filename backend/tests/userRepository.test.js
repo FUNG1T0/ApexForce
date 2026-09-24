@@ -36,15 +36,27 @@ describe('UserRepository', () => {
   });
 
   test('creates users with parameterized values', async () => {
-    const pool = { query: jest.fn().mockResolvedValue({ rows: [row] }) };
+    const client = {
+      query: jest.fn().mockImplementation((query) => Promise.resolve({
+        rows: query.includes('INSERT INTO users') ? [row] : [],
+      })),
+      release: jest.fn(),
+    };
+    const pool = { query: jest.fn(), connect: jest.fn().mockResolvedValue(client) };
     const repository = new UserRepository(pool);
     const created = await repository.create({
       id: row.id, name: row.name, email: row.email, passwordHash: row.password_hash,
       role: row.role, branchId: row.branch_id,
-    });
+    }, 'actor-id');
     expect(created.id).toBe(row.id);
-    expect(pool.query.mock.calls[0][0]).toContain('INSERT INTO users');
-    expect(pool.query.mock.calls[0][1]).toEqual([row.id, row.name, row.email, row.password_hash, row.role, null]);
+    expect(client.query.mock.calls[1][0]).toContain('INSERT INTO users');
+    expect(client.query.mock.calls[1][1]).toEqual([row.id, row.name, row.email, row.password_hash, row.role, null]);
+    expect(client.query.mock.calls[2][0]).toContain('INSERT INTO audit_logs');
+    expect(client.query.mock.calls[2][1]).toEqual([
+      'actor-id', 'USER_CREATED', row.id, null, JSON.stringify({ role: row.role }),
+    ]);
+    expect(client.query.mock.calls.at(-1)[0]).toBe('COMMIT');
+    expect(client.release).toHaveBeenCalledTimes(1);
   });
 
   test('upgrades a stored password hash without changing other user data', async () => {

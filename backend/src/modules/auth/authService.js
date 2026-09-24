@@ -79,7 +79,7 @@ class AuthService {
     this.tokenSigner = tokenSigner;
   }
 
-  async register(input) {
+  async register(input, actorUserId = null) {
     const userInput = validateRegistration(input);
     const existing = await this.userRepository.findByEmail(userInput.email);
     if (existing) {
@@ -96,7 +96,7 @@ class AuthService {
         passwordHash,
         role: userInput.role,
         branchId: userInput.branchId,
-      });
+      }, actorUserId);
       return publicUser(user);
     } catch (error) {
       if (error.code === '23505') {

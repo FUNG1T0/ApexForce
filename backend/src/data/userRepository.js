@@ -33,14 +33,38 @@ class UserRepository {
     return mapUser(result.rows[0]);
   }
 
-  async create(user) {
-    const result = await this.pool.query(
-      `INSERT INTO users (id, name, email, password_hash, role, branch_id)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING id, name, email, password_hash, role, branch_id, created_at`,
-      [user.id, user.name, user.email, user.passwordHash, user.role, user.branchId],
-    );
-    return mapUser(result.rows[0]);
+  async create(user, actorUserId = null) {
+    const client = await this.pool.connect();
+    let transactionStarted = false;
+    try {
+      await client.query('BEGIN');
+      transactionStarted = true;
+      const result = await client.query(
+        `INSERT INTO users (id, name, email, password_hash, role, branch_id)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING id, name, email, password_hash, role, branch_id, created_at`,
+        [user.id, user.name, user.email, user.passwordHash, user.role, user.branchId],
+      );
+      await client.query(
+        `INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, branch_id, details)
+         VALUES ($1, $2, 'users', $3, $4, $5::jsonb)`,
+        [
+          actorUserId,
+          actorUserId ? 'USER_CREATED' : 'USER_BOOTSTRAPPED',
+          user.id,
+          user.branchId,
+          JSON.stringify({ role: user.role }),
+        ],
+      );
+      await client.query('COMMIT');
+      transactionStarted = false;
+      return mapUser(result.rows[0]);
+    } catch (error) {
+      if (transactionStarted) await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async updatePasswordHash(id, passwordHash) {

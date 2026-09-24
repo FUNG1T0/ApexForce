@@ -33,9 +33,39 @@ function setup() {
     hash: async (password, rounds) => `$2b$mock$${rounds}$${password}`,
     compare: async (password, storedHash) => storedHash === `$2b$mock$12$${password}`,
   };
+  const inventoryRepository = {
+    list: jest.fn().mockResolvedValue([
+      {
+        productId: '223e4567-e89b-42d3-a456-426614174000',
+        sku: 'AF-001',
+        productName: 'Producto de prueba',
+        branchId: BRANCH_ID,
+        quantity: 12,
+        updatedAt: '2026-09-23T12:00:00.000Z',
+      },
+    ]),
+    listProducts: jest.fn().mockResolvedValue([]),
+    createProduct: jest.fn(async (input) => ({
+      id: '223e4567-e89b-42d3-a456-426614174003',
+      sku: input.sku,
+      name: input.name,
+      description: input.description,
+      isActive: true,
+      createdAt: '2026-09-23T12:00:00.000Z',
+      updatedAt: '2026-09-23T12:00:00.000Z',
+    })),
+    setQuantity: jest.fn(async (input) => ({
+      id: '323e4567-e89b-42d3-a456-426614174000',
+      productId: input.productId,
+      branchId: input.branchId,
+      quantity: input.quantity,
+      updatedAt: '2026-09-23T12:00:00.000Z',
+    })),
+  };
   return {
     repository,
-    app: createApp({ userRepository: repository, jwtSecret: JWT_SECRET, passwordHasher }),
+    inventoryRepository,
+    app: createApp({ userRepository: repository, inventoryRepository, jwtSecret: JWT_SECRET, passwordHasher }),
     adminToken: makeToken(ADMIN_ID, ROLES.ADMIN_GENERAL),
     employeeToken: makeToken(EMPLOYEE_ID, ROLES.EMPLEADO_MOSTRADOR),
   };
@@ -115,6 +145,11 @@ describe('Apex Force API', () => {
     expect(response.body.user.role).toBe(ROLES.GERENTE_SUCURSAL);
     expect(response.body.user).not.toHaveProperty('passwordHash');
     expect(repository.users).toHaveLength(3);
+    expect(repository.auditLogs[0]).toMatchObject({
+      actorUserId: ADMIN_ID,
+      action: 'USER_CREATED',
+      entityId: repository.users[2].id,
+    });
   });
 
   test('rejects an expired JWT', async () => {
@@ -150,6 +185,73 @@ describe('Apex Force API', () => {
       .set('Authorization', `Bearer ${removedAccountToken}`).expect(401);
   });
 
+  test('protects inventory from unauthenticated requests and returns items to an authenticated user', async () => {
+    const { app, employeeToken, inventoryRepository } = setup();
+    await request(app).get('/api/inventory').expect(401);
+    expect(inventoryRepository.list).not.toHaveBeenCalled();
+
+    const response = await request(app).get('/api/inventory')
+      .set('Authorization', `Bearer ${employeeToken}`).expect(200);
+    expect(response.body.items).toHaveLength(1);
+    expect(response.body.items[0]).toMatchObject({ sku: 'AF-001', quantity: 12, branchId: BRANCH_ID });
+    expect(inventoryRepository.list).toHaveBeenCalledTimes(1);
+  });
+
+  test('allows authenticated users to list products but restricts product creation to administrators', async () => {
+    const { app, adminToken, employeeToken, inventoryRepository } = setup();
+    await request(app).get('/api/products').expect(401);
+    await request(app).get('/api/products')
+      .set('Authorization', `Bearer ${employeeToken}`).expect(200);
+    await request(app).post('/api/products').send({ sku: 'AF-002', name: 'Producto nuevo' }).expect(401);
+    await request(app).post('/api/products')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .send({ sku: 'AF-002', name: 'Producto nuevo' }).expect(403);
+
+    const response = await request(app).post('/api/products')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ sku: 'af-002', name: 'Producto nuevo' }).expect(201);
+    expect(response.body.product).toMatchObject({ sku: 'AF-002', name: 'Producto nuevo' });
+    expect(inventoryRepository.createProduct).toHaveBeenCalledWith({
+      sku: 'AF-002', name: 'Producto nuevo', description: null, actorUserId: ADMIN_ID,
+    });
+  });
+
+  test('validates inventory writes and records the authenticated actor, not a body-supplied actor', async () => {
+    const { app, adminToken, employeeToken, inventoryRepository } = setup();
+    const payload = {
+      productId: '223e4567-e89b-42d3-a456-426614174000',
+      branchId: BRANCH_ID,
+      quantity: 8,
+      actorUserId: EMPLOYEE_ID,
+    };
+
+    await request(app).put('/api/inventory').set('Authorization', `Bearer ${employeeToken}`)
+      .send(payload).expect(403);
+    await request(app).put('/api/inventory').set('Authorization', `Bearer ${adminToken}`)
+      .send({ ...payload, quantity: -1 }).expect(400);
+    expect(inventoryRepository.setQuantity).not.toHaveBeenCalled();
+
+    const response = await request(app).put('/api/inventory')
+      .set('Authorization', `Bearer ${adminToken}`).send(payload).expect(200);
+    expect(response.body.item).toMatchObject({ quantity: 8, branchId: BRANCH_ID });
+    expect(inventoryRepository.setQuantity).toHaveBeenCalledWith({
+      productId: payload.productId,
+      branchId: BRANCH_ID,
+      quantity: 8,
+      actorUserId: ADMIN_ID,
+    });
+  });
+
+  test('returns safe database errors for product and inventory writes', async () => {
+    const { app, adminToken, inventoryRepository } = setup();
+    inventoryRepository.createProduct.mockRejectedValueOnce(new Error('private database detail'));
+    const response = await request(app).post('/api/products')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ sku: 'AF-009', name: 'Producto de error' }).expect(500);
+    expect(response.body.error.message).toBe('Ocurrió un error interno.');
+    expect(JSON.stringify(response.body)).not.toContain('private database detail');
+  });
+
   test('rejects missing, malformed, and role-tampered tokens', async () => {
     const { app } = setup();
     await request(app).get('/api/users/me').expect(401);
@@ -175,7 +277,16 @@ describe('Apex Force API', () => {
 
     const brokenRepository = createMemoryUserRepository();
     brokenRepository.findById = async () => { throw new Error('private database detail'); };
-    const brokenApp = createApp({ userRepository: brokenRepository, jwtSecret: JWT_SECRET });
+    const brokenApp = createApp({
+      userRepository: brokenRepository,
+      inventoryRepository: {
+        list: async () => [],
+        listProducts: async () => [],
+        createProduct: async () => null,
+        setQuantity: async () => null,
+      },
+      jwtSecret: JWT_SECRET,
+    });
     const response = await request(brokenApp).get('/api/users/me')
       .set('Authorization', `Bearer ${adminToken}`).expect(500);
     expect(response.body.error.message).toBe('Ocurrió un error interno.');
