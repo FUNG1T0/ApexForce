@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
+const argon2 = require('argon2');
+const bcrypt = require('bcrypt');
 const { AuthService, AUDIENCE, ISSUER } = require('../src/modules/auth/authService');
-const { AppError } = require('../src/domain/appError');
 const { ROLES } = require('../src/domain/roles');
 const { createMemoryUserRepository } = require('./helpers/memoryUserRepository');
 
@@ -9,9 +10,8 @@ const BRANCH_ID = '123e4567-e89b-42d3-a456-426614174000';
 
 function makeHasher() {
   return {
-    argon2id: 2,
-    hash: jest.fn(async (password) => `hashed:${password}`),
-    verify: jest.fn(async (hash, password) => hash === `hashed:${password}`),
+    hash: jest.fn(async (password, rounds) => `$2b$mock$${rounds}$${password}`),
+    compare: jest.fn(async (password, hash) => hash === `$2b$mock$12$${password}`),
   };
 }
 
@@ -48,22 +48,39 @@ describe('AuthService', () => {
     expect(user.role).toBe(ROLES.EMPLEADO_MOSTRADOR);
     expect(user.branchId).toBe(BRANCH_ID);
     expect(user).not.toHaveProperty('passwordHash');
-    expect(hasher.hash).toHaveBeenCalledWith('clave-de-prueba-segura', { type: 2 });
-    expect(repository.users[0].passwordHash).toBe('hashed:clave-de-prueba-segura');
+    expect(hasher.hash).toHaveBeenCalledWith('clave-de-prueba-segura', 12);
+    expect(repository.users[0].passwordHash).toBe('$2b$mock$12$clave-de-prueba-segura');
   });
 
-  test('uses the real Argon2id implementation for stored password hashes', async () => {
+  test('uses bcrypt for new password hashes', async () => {
     const realService = new AuthService({ userRepository: repository, jwtSecret: JWT_SECRET });
     await realService.register(validInput());
-    expect(repository.users[0].passwordHash).toMatch(/^\$argon2id\$/);
+    expect(repository.users[0].passwordHash).toMatch(/^\$2[aby]\$12\$/);
     const result = await realService.login({ email: 'ana@apexforce.local', password: 'clave-de-prueba-segura' });
     expect(result.accessToken).toEqual(expect.any(String));
+  });
+
+  test('upgrades a valid legacy Argon2id hash to bcrypt after login', async () => {
+    const password = 'clave-legada-segura';
+    const legacyHash = await argon2.hash(password);
+    const legacyRepository = createMemoryUserRepository([{
+      id: 'legacy-user', name: 'Legacy', email: 'legacy@apexforce.local',
+      passwordHash: legacyHash, role: ROLES.EMPLEADO_MOSTRADOR,
+    }]);
+    const legacyService = new AuthService({ userRepository: legacyRepository, jwtSecret: JWT_SECRET });
+
+    const result = await legacyService.login({ email: 'legacy@apexforce.local', password });
+
+    expect(result.accessToken).toEqual(expect.any(String));
+    expect(legacyRepository.users[0].passwordHash).toMatch(/^\$2[aby]\$12\$/);
+    await expect(bcrypt.compare(password, legacyRepository.users[0].passwordHash)).resolves.toBe(true);
   });
 
   test.each([
     [{ name: 'A' }, 'INVALID_NAME'],
     [{ email: 'not-an-email' }, 'INVALID_EMAIL'],
     [{ password: 'short' }, 'INVALID_PASSWORD'],
+    [{ password: 'á'.repeat(37) }, 'INVALID_PASSWORD'],
     [{ role: 'SUPER_ADMIN' }, 'INVALID_ROLE'],
     [{ branchId: 'not-a-uuid' }, 'INVALID_BRANCH'],
     [{ role: ROLES.ADMIN_GENERAL, branchId: BRANCH_ID }, 'INVALID_BRANCH'],
@@ -116,7 +133,7 @@ describe('AuthService', () => {
   test('rejects malformed login data and treats hash verification errors as invalid credentials', async () => {
     await expect(service.login({ email: 'bad', password: '' })).rejects.toMatchObject({ status: 400 });
     const user = await service.register(validInput());
-    hasher.verify.mockRejectedValueOnce(new Error('bad stored hash'));
+    hasher.compare.mockRejectedValueOnce(new Error('bad stored hash'));
     await expect(service.login({ email: user.email, password: 'clave-de-prueba-segura' }))
       .rejects.toMatchObject({ code: 'INVALID_CREDENTIALS', status: 401 });
   });
